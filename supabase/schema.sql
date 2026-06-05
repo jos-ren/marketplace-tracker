@@ -17,9 +17,12 @@ create table listings (
   mileage      integer,                    -- in miles
   location     text,
   photo_url    text,
+  posted_date  date,                        -- site's listing date when available (e.g. Craigslist)
   status       text not null default 'new',-- 'new' | 'viewed' | 'shortlisted' | 'hidden'
   first_seen   timestamptz not null default now(),
   last_seen    timestamptz not null default now(),
+  view_count   integer not null default 0, -- dashboard card click count
+  last_viewed_at timestamptz,
 
   -- THE dedupe rule: one row per listing per site
   unique (source, external_id)
@@ -88,7 +91,7 @@ begin
     if not found then
       insert into listings
         (source, external_id, url, title, price, year, make_model,
-         mileage, location, photo_url)
+         mileage, location, photo_url, posted_date)
       values
         (item->>'source',
          item->>'external_id',
@@ -99,7 +102,8 @@ begin
          item->>'make_model',
          nullif(item->>'mileage', '')::integer,
          item->>'location',
-         item->>'photo_url')
+         item->>'photo_url',
+         nullif(item->>'posted_date', '')::date)
       returning * into existing;
 
       inserted_count := inserted_count + 1;
@@ -119,7 +123,8 @@ begin
         year       = coalesce(nullif(item->>'year', '')::integer, year),
         make_model = coalesce(item->>'make_model', make_model),
         mileage    = coalesce(nullif(item->>'mileage', '')::integer, mileage),
-        price      = coalesce(new_price, price)
+        price      = coalesce(new_price, price),
+        posted_date = coalesce(nullif(item->>'posted_date', '')::date, posted_date)
       where id = existing.id;
 
       -- price changed? log it
@@ -133,6 +138,21 @@ begin
 
   return inserted_count;
 end;
+$$;
+
+-- ---------- VIEW TRACKING ----------
+-- Called by the dashboard when a listing card is clicked. Atomically bumps the
+-- click count and stamps last_viewed_at. Intentionally does NOT touch status —
+-- view tracking is separate from the new/viewed/shortlisted/hidden workflow.
+create or replace function record_view(p_id uuid)
+returns void
+language sql
+set search_path = public
+as $$
+  update listings
+     set view_count    = view_count + 1,
+         last_viewed_at = now()
+   where id = p_id;
 $$;
 
 -- ---------- SECURITY NOTE (v1 tradeoff, deliberate) ----------

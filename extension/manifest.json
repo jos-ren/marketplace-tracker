@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Vehicle Listing Tracker",
+  "version": "0.1.0",
+  "description": "Captures vehicle listings from Facebook Marketplace, AutoTrader, and CarGurus into Supabase as you browse.",
+  "host_permissions": ["https://*.supabase.co/*"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/marketplace/*",
+        "https://www.autotrader.ca/*",
+        "https://www.cargurus.ca/*",
+        "https://*.craigslist.org/*",
+        "https://www.kijiji.ca/*"
+      ],
+      "js": [
+        "config.js",
+        "lib/supabase.js",
+        "lib/queue.js",
+        "parsers/facebook.js",
+        "parsers/autotrader.js",
+        "parsers/cargurus.js",
+        "parsers/craigslist.js",
+        "parsers/kijiji.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

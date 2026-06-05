@@ -1,0 +1,7 @@
+# Secrets — never commit real credentials
+extension/config.js
+dashboard/.env.local
+
+# Dependencies & build output
+node_modules/
+.next/
