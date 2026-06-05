@@ -1,18 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
 import type { Listing, ListingStatus } from "@/lib/types";
 import { isVehicle } from "@/lib/vehicle";
 import { ListingCard } from "@/components/ListingCard";
 
-type Tab = "new" | "all" | "shortlist" | "hidden";
+type Tab = "new" | "all" | "shortlist";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "new", label: "New" },
   { key: "all", label: "All" },
-  { key: "shortlist", label: "Shortlist" },
-  { key: "hidden", label: "Hidden" },
+  { key: "shortlist", label: "Saved" },
 ];
 
 type SortKey =
@@ -28,7 +28,7 @@ type SortKey =
   | "views_desc";
 
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: "default", label: "Sort: Default" },
+  { key: "default", label: "Default" },
   { key: "added_desc", label: "Newest added" },
   { key: "added_asc", label: "Oldest added" },
   { key: "posted_desc", label: "Newest posted" },
@@ -43,8 +43,7 @@ const SORTS: { key: SortKey; label: string }[] = [
 const EMPTY_STATE: Record<Tab, string> = {
   new: "Nothing new since your last visit 🎉",
   all: "No listings yet — browse a supported site with the extension on.",
-  shortlist: "No shortlisted listings yet. Star a few from the other tabs.",
-  hidden: "Nothing hidden.",
+  shortlist: "Nothing saved yet. Tap the star on a listing to save it.",
 };
 
 export default function Page() {
@@ -66,19 +65,26 @@ export default function Page() {
   const [showNoPrice, setShowNoPrice] = useState(false);
   const [sort, setSort] = useState<SortKey>("default");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
+  const sortRef = useRef<HTMLDivElement>(null);
 
-  // close the Filters dropdown on outside click
+  // Close a popover on outside click. Opening one closes the other (handled at
+  // the toggle sites), so at most one of these is ever open.
   useEffect(() => {
-    if (!filtersOpen) return;
+    if (!filtersOpen && !sortOpen) return;
     function onDown(e: MouseEvent) {
-      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) {
+      const t = e.target as Node;
+      if (filtersOpen && filtersRef.current && !filtersRef.current.contains(t)) {
         setFiltersOpen(false);
+      }
+      if (sortOpen && sortRef.current && !sortRef.current.contains(t)) {
+        setSortOpen(false);
       }
     }
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [filtersOpen]);
+  }, [filtersOpen, sortOpen]);
 
   const activeFilterCount =
     (minPrice ? 1 : 0) +
@@ -210,7 +216,6 @@ export default function Page() {
       new: base.filter(isNew).length,
       all: base.filter((l) => l.status !== "hidden").length,
       shortlist: base.filter((l) => l.status === "shortlisted").length,
-      hidden: base.filter((l) => l.status === "hidden").length,
     } as Record<Tab, number>;
   }, [base, lastVisit]);
 
@@ -242,10 +247,8 @@ export default function Page() {
       );
     } else if (tab === "all") {
       rows = rows.filter((l) => l.status !== "hidden");
-    } else if (tab === "shortlist") {
-      rows = rows.filter((l) => l.status === "shortlisted");
     } else {
-      rows = rows.filter((l) => l.status === "hidden");
+      rows = rows.filter((l) => l.status === "shortlisted");
     }
 
     // sort — nulls always sort to the end regardless of direction
@@ -315,170 +318,237 @@ export default function Page() {
     return Array.from(map.values());
   }, [visible]);
 
+  const sourceCount = new Set(listings.map((l) => l.source)).size;
+  const sortLabel = SORTS.find((s) => s.key === sort)?.label ?? "Default";
+
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
-      <header className="mb-4">
-        <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-          Vehicle Listing Tracker
-        </h1>
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          {loading ? "Loading…" : `${listings.length} listings tracked`}
-        </p>
+    <main className="mx-auto w-full max-w-7xl flex-1 px-6 pb-20">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <header className="border-b border-border pt-10 pb-6">
+        <div className="flex items-end justify-between">
+          <div>
+            <h1 className="text-2xl font-medium tracking-[-0.01em] text-foreground">
+              Vehicle Tracker
+            </h1>
+            <p className="tabular mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              {loading
+                ? "Loading…"
+                : `${listings.length} listings · ${sourceCount} source${
+                    sourceCount === 1 ? "" : "s"
+                  }`}
+            </p>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="mt-8 flex gap-1">
+          {TABS.map((t) => {
+            const active = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`relative flex items-center gap-2 px-3 py-3 text-[13px] font-medium transition-colors ${
+                  active
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t.label}
+                <span
+                  className={`tabular rounded px-1.5 py-0.5 text-[10px] ${
+                    active
+                      ? "bg-primary/20 text-primary"
+                      : "bg-surface-2 text-muted-foreground"
+                  }`}
+                >
+                  {counts[t.key]}
+                </span>
+                {active && (
+                  <span className="absolute inset-x-0 bottom-0 h-px bg-foreground" />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </header>
 
       {error && (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+        <div className="mt-5 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="mb-4 flex flex-wrap gap-1 border-b border-neutral-200 dark:border-neutral-800">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${
-              tab === t.key
-                ? "border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100"
-                : "border-transparent text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-            }`}
-          >
-            {t.label}
-            <span className="ml-1.5 rounded-full bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
-              {counts[t.key]}
-            </span>
-          </button>
-        ))}
-      </div>
+      {/* ── Controls ───────────────────────────────────────────── */}
+      <div className="flex flex-col gap-2 py-5 md:flex-row md:items-center">
+        <div className="relative flex-1">
+          <Search
+            size={16}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search make, model, or year…"
+            className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
+          />
+        </div>
 
-      {/* Controls */}
-      <div className="mb-5 flex flex-wrap items-center gap-2">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search title…"
-          className="min-w-[12rem] flex-1 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-900 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-        />
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as SortKey)}
-          className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-        >
-          {SORTS.map((s) => (
-            <option key={s.key} value={s.key}>
-              {s.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex gap-2">
+          {/* Sort dropdown */}
+          <div className="relative" ref={sortRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setSortOpen((o) => !o);
+                setFiltersOpen(false);
+              }}
+              className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm text-foreground transition-colors hover:border-border-strong"
+            >
+              <span className="text-muted-foreground">Sort:</span>
+              <span>{sortLabel}</span>
+              <ChevronDown size={14} className="text-muted-foreground" />
+            </button>
 
-        {/* Filters dropdown */}
-        <div className="relative" ref={filtersRef}>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((o) => !o)}
-            className="flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
-          >
-            Filters
-            {activeFilterCount > 0 && (
-              <span className="rounded-full bg-neutral-900 px-1.5 text-xs text-white dark:bg-neutral-100 dark:text-neutral-900">
-                {activeFilterCount}
-              </span>
+            {sortOpen && (
+              <div className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-2xl ring-1 ring-border">
+                {SORTS.map((s) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => {
+                      setSort(s.key);
+                      setSortOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-surface-2 ${
+                      sort === s.key ? "text-primary" : "text-foreground"
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             )}
-            <span className="text-neutral-400">▾</span>
-          </button>
+          </div>
 
-          {filtersOpen && (
-            <div className="absolute right-0 z-10 mt-1 w-72 rounded-md border border-neutral-200 bg-white p-3 shadow-lg dark:border-neutral-800 dark:bg-neutral-900">
-              <div className="flex flex-col gap-3">
-                <div>
-                  <span className="mb-1 block text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                    Price
-                  </span>
-                  <div className="flex items-center gap-2">
+          {/* Filters dropdown */}
+          <div className="relative" ref={filtersRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setFiltersOpen((o) => !o);
+                setSortOpen(false);
+              }}
+              className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm text-foreground transition-colors hover:border-border-strong"
+            >
+              <SlidersHorizontal size={14} className="text-muted-foreground" />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="tabular flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {filtersOpen && (
+              <div className="absolute right-0 z-20 mt-2 w-80 rounded-lg border border-border bg-surface p-4 shadow-2xl ring-1 ring-border">
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.15em] text-muted-foreground">
+                      Price (CAD)
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={minPrice}
+                        onChange={(e) => setMinPrice(e.target.value)}
+                        placeholder="Min"
+                        className="tabular w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
+                      />
+                      <span className="text-border-strong">–</span>
+                      <input
+                        type="number"
+                        value={maxPrice}
+                        onChange={(e) => setMaxPrice(e.target.value)}
+                        placeholder="Max"
+                        className="tabular w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.15em] text-muted-foreground">
+                      Max mileage (km)
+                    </span>
                     <input
                       type="number"
-                      value={minPrice}
-                      onChange={(e) => setMinPrice(e.target.value)}
-                      placeholder="Min"
-                      className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-900 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
-                    />
-                    <span className="text-neutral-400">–</span>
-                    <input
-                      type="number"
-                      value={maxPrice}
-                      onChange={(e) => setMaxPrice(e.target.value)}
-                      placeholder="Max"
-                      className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-900 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+                      value={maxMileage}
+                      onChange={(e) => setMaxMileage(e.target.value)}
+                      placeholder="Max km"
+                      className="tabular w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
                     />
                   </div>
-                </div>
 
-                <div>
-                  <span className="mb-1 block text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                    Max mileage (km)
-                  </span>
-                  <input
-                    type="number"
-                    value={maxMileage}
-                    onChange={(e) => setMaxMileage(e.target.value)}
-                    placeholder="Max km"
-                    className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-900 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
-                  />
-                </div>
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={showNonVehicles}
+                      onChange={(e) => setShowNonVehicles(e.target.checked)}
+                      className="accent-[var(--primary)]"
+                    />
+                    Show parts/non-vehicles
+                    {hiddenNonVehicleCount > 0 && !showNonVehicles && (
+                      <span className="tabular text-muted-foreground">
+                        ({hiddenNonVehicleCount})
+                      </span>
+                    )}
+                  </label>
 
-                <label className="flex items-center gap-1.5 text-sm text-neutral-700 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    checked={showNonVehicles}
-                    onChange={(e) => setShowNonVehicles(e.target.checked)}
-                  />
-                  Show parts/non-vehicles
-                  {hiddenNonVehicleCount > 0 && !showNonVehicles && (
-                    <span className="text-neutral-400">({hiddenNonVehicleCount})</span>
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={showNoPrice}
+                      onChange={(e) => setShowNoPrice(e.target.checked)}
+                      className="accent-[var(--primary)]"
+                    />
+                    Show no-price listings
+                    {hiddenNoPriceCount > 0 && !showNoPrice && (
+                      <span className="tabular text-muted-foreground">
+                        ({hiddenNoPriceCount})
+                      </span>
+                    )}
+                  </label>
+
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="self-start text-xs text-primary hover:underline"
+                    >
+                      Clear filters
+                    </button>
                   )}
-                </label>
-
-                <label className="flex items-center gap-1.5 text-sm text-neutral-700 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    checked={showNoPrice}
-                    onChange={(e) => setShowNoPrice(e.target.checked)}
-                  />
-                  Show no-price listings
-                  {hiddenNoPriceCount > 0 && !showNoPrice && (
-                    <span className="text-neutral-400">({hiddenNoPriceCount})</span>
-                  )}
-                </label>
-
-                {activeFilterCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="self-start text-xs text-neutral-500 hover:underline dark:text-neutral-400"
-                  >
-                    Clear filters
-                  </button>
-                )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Grid */}
+      {/* ── Grid ───────────────────────────────────────────────── */}
       {!loading && visible.length === 0 ? (
-        <p className="py-16 text-center text-neutral-500 dark:text-neutral-400">
+        <p className="py-16 text-center text-sm text-muted-foreground">
           {EMPTY_STATE[tab]}
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {groups.map((g) => (
             <ListingCard
               key={g[0].id}
               group={g}
               previousPrice={prevPrices[g[0].id] ?? null}
+              showNewBadge={tab === "new"}
               onStatus={updateStatus}
               onView={recordView}
             />
