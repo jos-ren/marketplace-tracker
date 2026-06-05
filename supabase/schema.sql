@@ -18,7 +18,8 @@ create table listings (
   location     text,
   photo_url    text,
   posted_date  date,                        -- site's listing date when available (e.g. Craigslist)
-  status       text not null default 'new',-- 'new' | 'viewed' | 'shortlisted' | 'hidden'
+  status       text not null default 'new',-- 'new' | 'updated' | 'seen'
+  saved        boolean not null default false, -- user-starred; independent of status
   first_seen   timestamptz not null default now(),
   last_seen    timestamptz not null default now(),
   view_count   integer not null default 0, -- dashboard card click count
@@ -35,7 +36,9 @@ create table price_history (
   observed_at  timestamptz not null default now()
 );
 
--- one-row-per-key settings store (e.g. last_dashboard_visit)
+-- one-row-per-key settings store. Currently unused by the dashboard (the New
+-- tab is cleared by an explicit "Mark all seen" action, not a visit timestamp),
+-- but kept for future settings.
 create table app_state (
   key    text primary key,
   value  text
@@ -60,8 +63,10 @@ values ('last_dashboard_visit', now()::text);
 --
 -- For each listing:
 --   * never seen before  -> insert it (status 'new') + first price_history row
---   * seen before        -> bump last_seen, refresh fields,
---                           and if the price changed, log it to price_history
+--   * seen before        -> bump last_seen, refresh fields, and if the price
+--                           changed, log it to price_history; a listing already
+--                           marked 'seen' flips back to 'updated' so it
+--                           resurfaces in the New tab
 
 create or replace function upsert_listings(items jsonb)
 returns integer  -- number of NEW listings inserted (handy for the extension badge)
@@ -127,11 +132,15 @@ begin
         posted_date = coalesce(nullif(item->>'posted_date', '')::date, posted_date)
       where id = existing.id;
 
-      -- price changed? log it
+      -- price changed? log it, and resurface a previously-seen listing
       if new_price is not null
          and existing.price is distinct from new_price then
         insert into price_history (listing_id, price)
         values (existing.id, new_price);
+
+        if existing.status = 'seen' then
+          update listings set status = 'updated' where id = existing.id;
+        end if;
       end if;
     end if;
   end loop;
@@ -143,7 +152,7 @@ $$;
 -- ---------- VIEW TRACKING ----------
 -- Called by the dashboard when a listing card is clicked. Atomically bumps the
 -- click count and stamps last_viewed_at. Intentionally does NOT touch status —
--- view tracking is separate from the new/viewed/shortlisted/hidden workflow.
+-- view tracking is separate from the new/updated/seen workflow.
 create or replace function record_view(p_id uuid)
 returns void
 language sql

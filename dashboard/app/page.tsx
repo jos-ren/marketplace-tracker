@@ -1,22 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
+import { CheckCheck, ChevronDown, Search, SlidersHorizontal } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
-import type { Listing, ListingStatus } from "@/lib/types";
+import type { Listing, PriceObservation } from "@/lib/types";
 import { isVehicle } from "@/lib/vehicle";
 import { ListingCard } from "@/components/ListingCard";
 
-type Tab = "new" | "all" | "shortlist";
+type Tab = "new" | "seen" | "shortlist";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "new", label: "New" },
-  { key: "all", label: "All" },
+  { key: "seen", label: "Seen" },
   { key: "shortlist", label: "Saved" },
 ];
 
 type SortKey =
-  | "default"
   | "added_desc"
   | "added_asc"
   | "posted_desc"
@@ -28,9 +27,8 @@ type SortKey =
   | "views_desc";
 
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: "default", label: "Default" },
-  { key: "added_desc", label: "Newest added" },
-  { key: "added_asc", label: "Oldest added" },
+  { key: "added_desc", label: "Newest tracked" },
+  { key: "added_asc", label: "Oldest tracked" },
   { key: "posted_desc", label: "Newest posted" },
   { key: "posted_asc", label: "Oldest posted" },
   { key: "price_asc", label: "Price: low → high" },
@@ -41,8 +39,8 @@ const SORTS: { key: SortKey; label: string }[] = [
 ];
 
 const EMPTY_STATE: Record<Tab, string> = {
-  new: "Nothing new since your last visit 🎉",
-  all: "No listings yet — browse a supported site with the extension on.",
+  new: "You're all caught up — nothing new or updated 🎉",
+  seen: "Nothing seen yet — triage the New tab and they'll land here.",
   shortlist: "Nothing saved yet. Tap the star on a listing to save it.",
 };
 
@@ -50,8 +48,7 @@ export default function Page() {
   const supabase = useMemo(() => getSupabase(), []);
 
   const [listings, setListings] = useState<Listing[]>([]);
-  const [prevPrices, setPrevPrices] = useState<Record<string, number | null>>({});
-  const [lastVisit, setLastVisit] = useState<string | null>(null);
+  const [histories, setHistories] = useState<Record<string, PriceObservation[]>>({});
   const [tab, setTab] = useState<Tab>("new");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +60,7 @@ export default function Page() {
   const [search, setSearch] = useState("");
   const [showNonVehicles, setShowNonVehicles] = useState(false);
   const [showNoPrice, setShowNoPrice] = useState(false);
-  const [sort, setSort] = useState<SortKey>("default");
+  const [sort, setSort] = useState<SortKey>("added_desc");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
@@ -113,15 +110,7 @@ export default function Page() {
     let cancelled = false;
     (async () => {
       try {
-        // 1. Read last_dashboard_visit FIRST (the "New" tab is computed against it).
-        const { data: stateRow } = await supabase
-          .from("app_state")
-          .select("value")
-          .eq("key", "last_dashboard_visit")
-          .maybeSingle();
-        const visit = stateRow?.value ?? null;
-
-        // 2. Listings.
+        // 1. Listings.
         const { data: rows, error: lErr } = await supabase
           .from("listings")
           .select("*")
@@ -129,31 +118,24 @@ export default function Page() {
           .limit(2000);
         if (lErr) throw lErr;
 
-        // 3. Price history -> "previous price" per listing (second-most-recent).
+        // 2. Full price history per listing (ascending by observed_at). The
+        //    card derives the previous price and renders the history tooltip.
         const { data: ph } = await supabase
           .from("price_history")
           .select("listing_id, price, observed_at")
           .order("observed_at", { ascending: true });
-        const byListing: Record<string, number[]> = {};
+        const hist: Record<string, PriceObservation[]> = {};
         (ph ?? []).forEach((r) => {
-          (byListing[r.listing_id] ??= []).push(r.price as number);
+          (hist[r.listing_id] ??= []).push({
+            price: r.price as number,
+            observed_at: r.observed_at as string,
+          });
         });
-        const prev: Record<string, number | null> = {};
-        for (const [lid, prices] of Object.entries(byListing)) {
-          prev[lid] = prices.length >= 2 ? prices[prices.length - 2] : null;
-        }
 
         if (cancelled) return;
-        setLastVisit(visit);
         setListings((rows ?? []) as Listing[]);
-        setPrevPrices(prev);
+        setHistories(hist);
         setLoading(false);
-
-        // 4. Stamp now() AFTER reading — order matters.
-        await supabase
-          .from("app_state")
-          .update({ value: new Date().toISOString() })
-          .eq("key", "last_dashboard_visit");
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : String(e));
@@ -167,14 +149,34 @@ export default function Page() {
     };
   }, [supabase]);
 
-  function updateStatus(id: string, status: ListingStatus) {
-    setListings((prev) => prev.map((l) => (l.id === id ? { ...l, status } : l))); // optimistic
+  function toggleSaved(id: string, saved: boolean) {
+    setListings((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, saved } : l))
+    ); // optimistic
     supabase
       ?.from("listings")
-      .update({ status })
+      .update({ saved })
       .eq("id", id)
       .then(({ error: uErr }) => {
-        if (uErr) console.error("status update failed", uErr);
+        if (uErr) console.error("saved update failed", uErr);
+      });
+  }
+
+  // Clear the New tab: every new/updated listing becomes "seen".
+  function markAllSeen() {
+    setListings((prev) =>
+      prev.map((l) =>
+        l.status === "new" || l.status === "updated"
+          ? { ...l, status: "seen" }
+          : l
+      )
+    ); // optimistic
+    supabase
+      ?.from("listings")
+      .update({ status: "seen" })
+      .in("status", ["new", "updated"])
+      .then(({ error: uErr }) => {
+        if (uErr) console.error("mark all seen failed", uErr);
       });
   }
 
@@ -209,15 +211,13 @@ export default function Page() {
   ).filter((l) => l.price == null).length;
 
   const counts = useMemo(() => {
-    const isNew = (l: Listing) =>
-      l.status === "new" &&
-      (!lastVisit || new Date(l.first_seen) > new Date(lastVisit));
+    const isNew = (l: Listing) => l.status === "new" || l.status === "updated";
     return {
       new: base.filter(isNew).length,
-      all: base.filter((l) => l.status !== "hidden").length,
-      shortlist: base.filter((l) => l.status === "shortlisted").length,
+      seen: base.filter((l) => l.status === "seen").length,
+      shortlist: base.filter((l) => l.saved).length,
     } as Record<Tab, number>;
-  }, [base, lastVisit]);
+  }, [base]);
 
   const visible = useMemo(() => {
     const mnp = minPrice ? parseInt(minPrice, 10) : null;
@@ -240,15 +240,11 @@ export default function Page() {
 
     // tab filter
     if (tab === "new") {
-      rows = rows.filter(
-        (l) =>
-          l.status === "new" &&
-          (!lastVisit || new Date(l.first_seen) > new Date(lastVisit))
-      );
-    } else if (tab === "all") {
-      rows = rows.filter((l) => l.status !== "hidden");
+      rows = rows.filter((l) => l.status === "new" || l.status === "updated");
+    } else if (tab === "seen") {
+      rows = rows.filter((l) => l.status === "seen");
     } else {
-      rows = rows.filter((l) => l.status === "shortlisted");
+      rows = rows.filter((l) => l.saved);
     }
 
     // sort — nulls always sort to the end regardless of direction
@@ -291,15 +287,10 @@ export default function Page() {
         sorted.sort((a, b) => b.view_count - a.view_count);
         break;
       default:
-        // Default: New tab by first_seen desc; other tabs by last_seen desc.
-        sorted.sort((a, b) =>
-          tab === "new"
-            ? t(b.first_seen) - t(a.first_seen)
-            : t(b.last_seen) - t(a.last_seen)
-        );
+        sorted.sort((a, b) => t(b.first_seen) - t(a.first_seen));
     }
     return sorted;
-  }, [base, tab, lastVisit, minPrice, maxPrice, maxMileage, search, sort]);
+  }, [base, tab, minPrice, maxPrice, maxMileage, search, sort]);
 
   // Combine the same vehicle across sites into one card. Match on
   // price + mileage + year (only when price & mileage are present); everything
@@ -319,7 +310,7 @@ export default function Page() {
   }, [visible]);
 
   const sourceCount = new Set(listings.map((l) => l.source)).size;
-  const sortLabel = SORTS.find((s) => s.key === sort)?.label ?? "Default";
+  const sortLabel = SORTS.find((s) => s.key === sort)?.label ?? "Newest tracked";
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-1 px-6 pb-20">
@@ -340,8 +331,9 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mt-8 flex gap-1">
+        {/* Tabs + Mark all seen */}
+        <div className="mt-8 flex items-center justify-between">
+          <div className="flex gap-1">
           {TABS.map((t) => {
             const active = tab === t.key;
             return (
@@ -370,6 +362,19 @@ export default function Page() {
               </button>
             );
           })}
+          </div>
+
+          {tab === "new" && counts.new > 0 && (
+            <button
+              type="button"
+              onClick={markAllSeen}
+              className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm text-foreground transition-colors hover:border-border-strong"
+              title="Mark every new and updated listing as seen"
+            >
+              <CheckCheck size={16} className="text-muted-foreground" />
+              Mark all seen
+            </button>
+          )}
         </div>
       </header>
 
@@ -547,9 +552,8 @@ export default function Page() {
             <ListingCard
               key={g[0].id}
               group={g}
-              previousPrice={prevPrices[g[0].id] ?? null}
-              showNewBadge={tab === "new"}
-              onStatus={updateStatus}
+              history={histories[g[0].id] ?? []}
+              onSave={toggleSaved}
               onView={recordView}
             />
           ))}

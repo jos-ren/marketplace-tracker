@@ -1,13 +1,15 @@
 "use client";
 
 import { Eye, ImageOff, Star } from "lucide-react";
-import type { Listing, ListingStatus } from "@/lib/types";
+import type { Listing, PriceObservation } from "@/lib/types";
 import {
   daysSince,
   formatMileage,
   formatPrice,
+  formatPriceDelta,
   postedShort,
-  scrapedLabel,
+  relativeTimeShort,
+  trackedLabel,
   sourceCode,
   sourceLabel,
 } from "@/lib/format";
@@ -27,17 +29,13 @@ const brandDot = (source: string) => BRAND_DOT[source] ?? "bg-muted-foreground";
 // (highest-sorted member, chosen by the caller).
 export function ListingCard({
   group,
-  previousPrice,
-  showNewBadge = false,
-  onStatus,
+  history,
+  onSave,
   onView,
 }: {
   group: Listing[];
-  previousPrice: number | null;
-  // The "NEW" badge only makes sense in the New tab — a listing keeps
-  // status "new" until triaged, but elsewhere it shouldn't shout "new".
-  showNewBadge?: boolean;
-  onStatus: (id: string, status: ListingStatus) => void;
+  history: PriceObservation[];
+  onSave: (id: string, saved: boolean) => void;
   onView: (id: string) => void;
 }) {
   if (!group || group.length === 0) return null;
@@ -66,8 +64,18 @@ export function ListingCard({
   const totalViews = group.reduce((sum, l) => sum + l.view_count, 0);
 
   const stale = daysSince(lastSeen) > 14;
-  const dropped =
-    previousPrice != null && rep.price != null && rep.price < previousPrice;
+
+  // Price history is keyed on the representative listing (history[] is ascending
+  // by observed_at; its last entry is the current price). The previous price is
+  // the second-most-recent observation; only show a change badge when it differs
+  // from the current price and we have ≥2 observations to compare/tooltip.
+  const hasHistory = history.length >= 2;
+  const previousPrice = hasHistory ? history[history.length - 2].price : null;
+  const changed =
+    previousPrice != null &&
+    rep.price != null &&
+    rep.price !== previousPrice;
+  const dropped = changed && rep.price! < previousPrice!;
   const mileage = formatMileage(rep.mileage);
 
   const metaBits = [
@@ -76,19 +84,12 @@ export function ListingCard({
     rep.location,
   ].filter(Boolean) as string[];
 
-  const setStatusAll = (status: ListingStatus) =>
-    group.forEach((l) => onStatus(l.id, status));
-
-  const saved = rep.status === "shortlisted";
+  const saved = rep.saved;
+  const setSavedAll = (value: boolean) =>
+    group.forEach((l) => onSave(l.id, value));
 
   return (
-    <div
-      className={`flex flex-col overflow-hidden rounded-xl border bg-surface transition-colors ${
-        saved
-          ? "border-primary/30 ring-1 ring-primary/40"
-          : "border-border hover:border-border-strong"
-      }`}
-    >
+    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface transition-colors hover:border-border-strong">
       {/* ── Photo zone ─────────────────────────────────────────── */}
       <div className="group/photo relative aspect-[4/3] overflow-hidden rounded-t-xl bg-surface-2">
         {photoListing.photo_url ? (
@@ -140,36 +141,20 @@ export function ListingCard({
           ))}
         </div>
 
-        {/* top-right: NEW badge (New tab only) + save star.
-            Star is a ghost icon that fades in on hover; once saved it stays
-            visible in warning-yellow. */}
-        <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
-          {rep.status === "new" && showNewBadge && (
-            <span className="flex items-center gap-1.5 rounded-md bg-primary/95 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-primary-foreground">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary-foreground" />
-              New
-            </span>
-          )}
-          <button
-            onClick={() => setStatusAll(saved ? "new" : "shortlisted")}
-            className={`flex h-8 w-8 items-center justify-center rounded-md bg-background/85 ring-1 ring-border-strong/50 backdrop-blur-md transition ${
-              saved
-                ? "pointer-events-auto text-warning opacity-100"
-                : "pointer-events-none text-foreground opacity-0 hover:text-warning group-hover/photo:pointer-events-auto group-hover/photo:opacity-100"
-            }`}
-            title={saved ? "Saved — click to remove" : "Save"}
-            aria-label={saved ? "Remove from saved" : "Save"}
-          >
-            <Star size={16} fill={saved ? "currentColor" : "none"} />
-          </button>
-        </div>
-
-        {/* stale tag bottom-left */}
-        {stale && (
-          <span className="absolute bottom-3 left-3 z-10 rounded-md bg-warning/15 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-warning ring-1 ring-warning/25">
-            Possibly sold
-          </span>
-        )}
+        {/* top-right save star — a ghost icon that fades in on hover; once
+            saved it stays visible in warning-yellow. */}
+        <button
+          onClick={() => setSavedAll(!saved)}
+          className={`absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-md bg-background/85 ring-1 ring-border-strong/50 backdrop-blur-md transition ${
+            saved
+              ? "pointer-events-auto text-warning opacity-100"
+              : "pointer-events-none text-foreground opacity-0 hover:text-warning group-hover/photo:pointer-events-auto group-hover/photo:opacity-100"
+          }`}
+          title={saved ? "Saved — click to remove" : "Save"}
+          aria-label={saved ? "Remove from saved" : "Save"}
+        >
+          <Star size={16} fill={saved ? "currentColor" : "none"} />
+        </button>
       </div>
 
       {/* ── Body ───────────────────────────────────────────────── */}
@@ -180,22 +165,78 @@ export function ListingCard({
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => onView(rep.id)}
-            className="line-clamp-2 text-[15px] font-medium leading-snug text-foreground transition-colors hover:text-primary"
+            title={rep.title ?? rep.make_model ?? "Untitled listing"}
+            className="min-w-0 truncate text-[15px] font-medium leading-snug text-foreground transition-colors hover:text-primary"
           >
             {rep.title ?? rep.make_model ?? "Untitled listing"}
           </a>
-          <div className="flex shrink-0 flex-col items-end">
+          <div className="group/price relative flex shrink-0 flex-col items-end">
             <span
               className={`tabular text-base font-medium ${
                 rep.price == null ? "text-muted-foreground" : "text-foreground"
+              } ${
+                hasHistory
+                  ? "cursor-help underline decoration-dotted decoration-muted-foreground/50 underline-offset-4"
+                  : ""
               }`}
             >
               {formatPrice(rep.price)}
             </span>
-            {dropped && (
-              <span className="tabular text-[11px] font-medium text-success">
-                ↓ was {formatPrice(previousPrice)}
+            {changed && (
+              <span
+                className={`tabular text-[11px] font-medium ${
+                  dropped ? "text-success" : "text-muted-foreground"
+                }`}
+              >
+                {dropped ? "↓" : "↑"} {formatPriceDelta(rep.price! - previousPrice!)}
               </span>
+            )}
+
+            {/* Price-history tooltip — CSS hover, newest first. Only when we
+                have ≥2 observations to show. */}
+            {hasHistory && (
+              <div className="pointer-events-none absolute right-0 top-full z-30 mt-2 w-56 rounded-lg border border-border bg-surface p-2.5 opacity-0 shadow-2xl ring-1 ring-border transition-opacity duration-150 group-hover/price:opacity-100">
+                <p className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                  Price history
+                </p>
+                <ul className="flex flex-col gap-1">
+                  {history
+                    .map((obs, i) => ({ obs, i }))
+                    .reverse()
+                    .map(({ obs, i }) => {
+                      const prev = i > 0 ? history[i - 1].price : null;
+                      const step = prev != null ? obs.price - prev : 0;
+                      return (
+                        <li
+                          key={obs.observed_at + i}
+                          className="flex items-baseline justify-between gap-3"
+                        >
+                          <span className="tabular text-[13px] font-medium text-foreground">
+                            {formatPrice(obs.price)}
+                          </span>
+                          <span className="flex items-baseline gap-1.5">
+                            {step !== 0 && (
+                              <span
+                                className={`tabular text-[10px] font-medium ${
+                                  step < 0
+                                    ? "text-success"
+                                    : "text-muted-foreground"
+                                }`}
+                              >
+                                {step < 0 ? "↓" : "↑"} {formatPriceDelta(step)}
+                              </span>
+                            )}
+                            <span className="tabular text-[10px] text-muted-foreground">
+                              {prev == null
+                                ? "first seen"
+                                : relativeTimeShort(obs.observed_at)}
+                            </span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                </ul>
+              </div>
             )}
           </div>
         </div>
@@ -204,7 +245,7 @@ export function ListingCard({
           <p className="tabular text-xs text-muted-foreground">
             {metaBits.map((bit, i) => (
               <span key={i}>
-                {i > 0 && <span className="text-border-strong"> · </span>}
+                {i > 0 && <span className="text-muted-foreground/40"> • </span>}
                 {bit}
               </span>
             ))}
@@ -212,11 +253,32 @@ export function ListingCard({
         )}
 
         {/* footer */}
-        <div className="mt-auto flex items-center justify-between gap-3 border-t border-border pt-3">
-          <div className="tabular flex items-center gap-3 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-            <span>{scrapedLabel(firstSeen)}</span>
+        <div className="mt-auto flex items-center justify-between gap-3 border-t border-muted-foreground/30 pt-3">
+          <div className="tabular flex items-center gap-2 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+            {(rep.status === "new" || rep.status === "updated") && (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.1em] ${
+                  rep.status === "new"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-primary/20 text-primary"
+                }`}
+              >
+                {rep.status}
+              </span>
+            )}
+            {stale && (
+              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.1em] text-warning">
+                Possibly sold
+              </span>
+            )}
+            <span>{trackedLabel(firstSeen)}</span>
             {postedDate && (
-              <span title={`Listed ${postedDate}`}>{postedShort(postedDate)}</span>
+              <>
+                <span className="text-muted-foreground/40">•</span>
+                <span title={`Listed ${postedDate}`}>
+                  {postedShort(postedDate)}
+                </span>
+              </>
             )}
           </div>
           {totalViews > 0 && (

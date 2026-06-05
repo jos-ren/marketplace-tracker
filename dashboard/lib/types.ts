@@ -1,4 +1,11 @@
-export type ListingStatus = "new" | "viewed" | "shortlisted" | "hidden";
+export type ListingStatus = "new" | "updated" | "seen";
+
+// One row of price_history: a price we observed at a point in time. Handed to a
+// card ordered ascending by observed_at (oldest first, newest last).
+export type PriceObservation = {
+  price: number;
+  observed_at: string;
+};
 
 export type Listing = {
   id: string;
@@ -14,6 +21,7 @@ export type Listing = {
   photo_url: string | null;
   posted_date: string | null;
   status: ListingStatus;
+  saved: boolean;
   first_seen: string;
   last_seen: string;
   view_count: number;
