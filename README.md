@@ -1,24 +1,37 @@
 # Vehicle Listing Tracker
 
-A personal-use tool that tracks vehicle listings across Facebook Marketplace,
-AutoTrader, and CarGurus. It solves one problem: when re-checking these sites
-weekly, I can't remember which listings I've already seen — so the tool
-remembers for me. A Chrome extension captures listing cards as I browse
-normally and stores them in Supabase; a Next.js dashboard shows them with a
-new → viewed / shortlisted / hidden workflow and a "new since last visit" view.
+Tracks car listings across Facebook Marketplace, Kijiji, AutoTrader,
+CarGurus, and Craigslist so you can tell what's new week to week. A Chrome
+extension captures listings into Supabase as you browse; a Next.js dashboard
+shows them in one place with a "new since last visit" view, price-drop
+detection, and a save workflow.
+
+![Dashboard](docs/dashboard.png)
+
+> _Add a screenshot at `docs/dashboard.png` (drop in the dashboard screenshot)._
+
+## Features
+
+- **New since last visit** — only what's appeared since you last looked.
+- **Save workflow** — star listings into a Saved tab (New / All / Saved).
+- **Price tracking** — per-listing history; flags `↓ was $X` on a drop.
+- **Cross-post dedupe** — the same car on multiple sites becomes one card.
+- **"Possibly sold"** — flags listings not seen recently.
 
 ## Architecture
+
+No custom backend server — the extension and dashboard both talk to Supabase
+directly.
 
 - **`extension/`** — plain-JS Chrome extension (Manifest V3, no build step). A
   content script parses listing cards from the DOM on supported search pages and
   batches them to Supabase via one Postgres RPC (`upsert_listings`).
 - **`supabase/`** — the entire backend. `schema.sql` defines the tables and the
   `upsert_listings` function (dedupe, `last_seen` bump, price-change logging).
-  No custom server.
-- **`dashboard/`** — Next.js app that reads from Supabase with
-  `@supabase/supabase-js`.
+- **`dashboard/`** — Next.js 16 / React 19 / Tailwind v4 app that reads from
+  Supabase with `@supabase/supabase-js`.
 
-Single user, no auth, RLS intentionally disabled.
+Single user, no auth, RLS disabled — built to run locally for one person.
 
 ## Setup on a fresh machine
 
@@ -39,9 +52,7 @@ Single user, no auth, RLS intentionally disabled.
 2. Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 3. `cd dashboard && npm install && npm run dev`
 
-## Secrets
+## Notes
 
-Never commit real credentials. `extension/config.js` and
-`dashboard/.env.local` are gitignored; their `*.example` counterparts are
-committed with placeholder values (`YOUR_SUPABASE_URL`,
-`YOUR_SUPABASE_ANON_KEY`).
+A personal project shared for reference — not packaged for distribution and not
+actively accepting contributions. Feel free to fork it.
