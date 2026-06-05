@@ -6,9 +6,7 @@ extension captures listings into Supabase as you browse; a Next.js dashboard
 shows them in one place with a "new since last visit" view, price-drop
 detection, and a save workflow.
 
-![Dashboard](docs/dashboard.png)
-
-> _Add a screenshot at `docs/dashboard.png` (drop in the dashboard screenshot)._
+<img width="1439" height="781" alt="image" src="https://github.com/user-attachments/assets/77b300b2-ade4-4e1e-b57d-9112a975826a" />
 
 ## Features
 
