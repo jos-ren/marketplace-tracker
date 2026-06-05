@@ -24,6 +24,7 @@ export function ListingCard({
   onStatus: (id: string, status: ListingStatus) => void;
   onView: (id: string) => void;
 }) {
+  if (!group || group.length === 0) return null;
   const rep = group[0];
 
   // one entry per distinct source, each linking to its own listing
